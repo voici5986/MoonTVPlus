@@ -43,7 +43,7 @@ import {
   Video,
 } from 'lucide-react';
 import { GripVertical } from 'lucide-react';
-import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { AdminConfig, AdminConfigResult } from '@/lib/admin.types';
@@ -4502,6 +4502,13 @@ const VideoSourceConfig = ({
   };
 
   const handleUpdateWeight = (key: string, weight: number) => {
+    // 先乐观更新本地状态
+    setSources((prev) =>
+      prev.map((s) =>
+        s.key === key ? { ...s, weight } : s
+      )
+    );
+
     // 调用API更新
     withLoading(`updateWeight_${key}`, async () => {
       try {
@@ -4766,8 +4773,48 @@ const VideoSourceConfig = ({
     }
   };
 
+  // 权重输入组件 - 使用本地状态避免输入时失焦
+  const WeightInput = memo(({ sourceKey, initialWeight }: { sourceKey: string; initialWeight: number }) => {
+    const [localWeight, setLocalWeight] = useState(initialWeight);
+
+    // 当外部权重变化时同步
+    useEffect(() => {
+      setLocalWeight(initialWeight);
+    }, [initialWeight]);
+
+    return (
+      <input
+        type='number'
+        inputMode='numeric'
+        min='0'
+        max='100'
+        value={localWeight}
+        onChange={(e) => {
+          const value = parseInt(e.target.value) || 0;
+          const clampedValue = Math.min(100, Math.max(0, value));
+          setLocalWeight(clampedValue);
+        }}
+        onBlur={(e) => {
+          const newValue = parseInt(e.target.value) || 0;
+          const clampedValue = Math.min(100, Math.max(0, newValue));
+          const originalWeight = config?.SourceConfig?.find(s => s.key === sourceKey)?.weight ?? 0;
+
+          // 只有在值发生变化时才调用API
+          if (clampedValue !== originalWeight) {
+            handleUpdateWeight(sourceKey, clampedValue);
+          }
+        }}
+        onPointerDown={(e) => e.stopPropagation()}
+        onTouchStart={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        className='w-16 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent'
+        title='权重范围：0-100，用于排序和优选评分'
+      />
+    );
+  });
+
   // 可拖拽行封装 (dnd-kit)
-  const DraggableRow = ({ source }: { source: DataSource }) => {
+  const DraggableRow = memo(({ source }: { source: DataSource }) => {
     const { attributes, listeners, setNodeRef, transform, transition } =
       useSortable({ id: source.key });
 
@@ -4852,35 +4899,8 @@ const VideoSourceConfig = ({
             />
           </button>
         </td>
-        <td className='px-6 py-4 whitespace-nowrap'>
-          <input
-            type='number'
-            min='0'
-            max='100'
-            value={source.weight ?? 0}
-            onChange={(e) => {
-              const value = parseInt(e.target.value) || 0;
-              const clampedValue = Math.min(100, Math.max(0, value));
-              // 只更新本地状态，不调用API
-              setSources((prev) =>
-                prev.map((s) =>
-                  s.key === source.key ? { ...s, weight: clampedValue } : s
-                )
-              );
-            }}
-            onBlur={(e) => {
-              const newValue = parseInt(e.target.value) || 0;
-              const clampedValue = Math.min(100, Math.max(0, newValue));
-              const originalWeight = config?.SourceConfig?.find(s => s.key === source.key)?.weight ?? 0;
-
-              // 只有在值发生变化时才调用API
-              if (clampedValue !== originalWeight) {
-                handleUpdateWeight(source.key, clampedValue);
-              }
-            }}
-            className='w-16 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent'
-            title='权重范围：0-100，用于排序和优选评分'
-          />
+        <td className='px-6 py-4 whitespace-nowrap' style={{ touchAction: 'auto' }}>
+          <WeightInput sourceKey={source.key} initialWeight={source.weight ?? 0} />
         </td>
         <td className='px-6 py-4 whitespace-nowrap max-w-[1rem]'>
           {(() => {
@@ -4934,7 +4954,7 @@ const VideoSourceConfig = ({
         </td>
       </tr>
     );
-  };
+  });
 
   // 全选/取消全选
   const handleSelectAll = useCallback(
